@@ -923,6 +923,57 @@ function resolveCashierSPV(people){
   });
 }
 
+let weeklySectionHistory = {}; // {weekKey: {dateKey: {name: {Pool,Lounge,Dining,Sundeck}}}}
+
+function getWeekKey(){
+  return dateColumns.map(d=>d.date).slice().sort((a,b)=>a-b).join("-");
+}
+
+function getWeeklyCounts(name, excludeDateKey){
+  const wk = getWeekKey();
+  const weekData = weeklySectionHistory[wk] || {};
+  const counts = {Pool:0, Lounge:0, Dining:0, Sundeck:0};
+  Object.keys(weekData).forEach(dateKey=>{
+    if(dateKey === excludeDateKey) return; // don't count today's own (possibly stale) prior run
+    const dayRecord = weekData[dateKey][name];
+    if(!dayRecord) return;
+    ["Pool","Lounge","Dining","Sundeck"].forEach(a=>{ counts[a] += (dayRecord[a]||0); });
+  });
+  return counts;
+}
+
+async function loadWeeklyHistory(){
+  try{
+    if(window.storage){
+      const saved = await window.storage.get("weekly_section_history", false);
+      if(saved && saved.value){ weeklySectionHistory = JSON.parse(saved.value); }
+    }
+  }catch(e){ /* no history yet */ }
+}
+
+function saveWeeklyHistory(){
+  try{ window.storage && window.storage.set("weekly_section_history", JSON.stringify(weeklySectionHistory), false); }catch(e){}
+}
+
+function recordWeeklyHistory(assign){
+  if(!selectedDate) return;
+  const wk = getWeekKey();
+  const dateKey = String(selectedDate.date);
+  weeklySectionHistory[wk] = weeklySectionHistory[wk] || {};
+  const dayRecord = {};
+  ["Sundeck","Pool","Lounge","Dining"].forEach(area=>{
+    const rowKey = "Server-"+area;
+    Object.values(assign[rowKey] || {}).forEach(nameList=>{
+      nameList.forEach(name=>{
+        dayRecord[name] = dayRecord[name] || {Pool:0,Lounge:0,Dining:0,Sundeck:0};
+        dayRecord[name][area]++;
+      });
+    });
+  });
+  weeklySectionHistory[wk][dateKey] = dayRecord; // overwrite -- safe if the same day gets regenerated
+  saveWeeklyHistory();
+}
+
 function doGenerate(){
   const overrideNotes = applyManualOverrides(peopleForDate);
   resolveCashierSPV(peopleForDate);
@@ -1014,8 +1065,16 @@ function doGenerate(){
       }
       // continue the cycle from wherever anyone's already been placed this shift (e.g. Sri Diah/Indrakila/Sundeck dual)
       const alreadyThisShift = order.reduce((sum,area)=> sum + ((assign["Server-"+area][shift]||[]).length), 0);
+      const todayKey = selectedDate ? String(selectedDate.date) : null;
       remaining.forEach((p, idx)=>{
-        const area = order[(alreadyThisShift + idx) % order.length];
+        let area = order[(alreadyThisShift + idx) % order.length];
+        // Weekly cap: max 2x the same Server area per person per week (soft cap -- only
+        // switches to an alternative if one exists; otherwise still places them here).
+        const weekCounts = getWeeklyCounts(p.name, todayKey);
+        if((weekCounts[area]||0) >= 2){
+          const alt = order.find(a => (weekCounts[a]||0) < 2);
+          if(alt) area = alt;
+        }
         (assign["Server-"+area][shift] = assign["Server-"+area][shift] || []).push(p.name);
       });
     });
@@ -1407,6 +1466,7 @@ function doGenerate(){
     "consider moving their shift, or manually adding them to whichever section is thinnest that shift."
   );
 
+  recordWeeklyHistory(assign);
   renderBoard(rows, assign, shifts, notes, additionalNotes, starReasons, unassignedWarnings);
 }
 
@@ -1921,6 +1981,7 @@ function exportDutiesToCSV(){
 }
 
 loadDutyOverrides();
+loadWeeklyHistory();
 
 function renderDuties(personNumbers, personInfo){
   const table = document.getElementById("dutiesTable");
