@@ -275,6 +275,18 @@
       <table id="dutiesTable"></table>
     </div>
 
+    <h2 style="margin-top:22px;">BREAK SCHEDULE</h2>
+    <p class="rule-summary">Auto-staggered so every section always keeps at least 1 person active. Manually adjust only for urgent floor situations.</p>
+    <div style="overflow-x:auto;">
+      <table id="breakScheduleTable"></table>
+    </div>
+
+    <h2 style="margin-top:22px;">MANNING PER HOUR</h2>
+    <p class="rule-summary">Headcount actively on duty each hour, after accounting for the break schedule above.</p>
+    <div style="overflow-x:auto;">
+      <table id="manningTable"></table>
+    </div>
+
     <div class="btn-row no-print">
       <button class="btn-primary" id="downloadPdfBtn">Download PDF</button>
       <button class="btn-ghost" id="resetBtn">Upload Another Schedule</button>
@@ -324,6 +336,20 @@ if(!window.storage){
 }
 
 const ALL_SHIFTS = ["M6","M6.30","M7","M8","M9","M10","M11","MD12","MD13","E2"];
+// Each shift is an 8-hour span (7 hours work + 1 hour break) starting at the given clock time.
+const SHIFT_START_HOUR = {M6:6, "M6.30":6.5, M7:7, M8:8, M9:9, M10:10, M11:11, MD12:12, MD13:13, E2:14.5};
+function shiftWindow(shift){
+  const start = SHIFT_START_HOUR[shift];
+  if(start === undefined) return null;
+  return {start, end: start + 8};
+}
+function formatHour(h){
+  const hh = Math.floor(h);
+  const mm = Math.round((h - hh) * 60);
+  const period = hh >= 12 ? "PM" : "AM";
+  let displayHour = hh % 12; if(displayHour === 0) displayHour = 12;
+  return displayHour + (mm ? ":" + String(mm).padStart(2,"0") : ":00") + " " + period;
+}
 const DINING_EXCLUDED_SHIFTS = ["M6","M6.30","M7"]; // Dining is only staffed by Server from M8 onward
 const MORNING_PREFERS_LOUNGE = ["M6","M6.30","M7","M8","M9","M10","M11"]; // morning/midday shifts -> Lounge is prioritized first, remainder go to Pool
 // rasio harian Pool:Lounge:Dining = 6:5:4 (Pool paling sedikit krn kebantu Sundeck, Lounge paling sibuk)
@@ -825,7 +851,8 @@ function serverProtectedMin(shift){
 // 2. Server bisa cover semuanya (Floater / Checker / Runner)
 // 3. Floater Runner bisa cover Food/Beverage Runner
 // 4. Food/Beverage Runner can cover Food/Beverage Checker, BUT only if checker = 0 for the ENTIRE DAY
-function applyCoverage(people){
+function applyCoverage(people, protectedNames){
+  protectedNames = protectedNames || new Set();
   const working = people.map(p => ({name:p.name, category:p.category, shift:p.shift, originalCategory:p.category}));
   const starNotes = []; // {name, reason}
   const shiftsPresent = [...new Set(working.map(p=>p.shift))];
@@ -834,7 +861,8 @@ function applyCoverage(people){
   function minOf(cat, shift){ return (MIN_TARGET[cat] && MIN_TARGET[cat][shift]) || 0; }
   function takeSurplus(fromCat, shift, n){
     return working.filter(p=>p.category===fromCat && p.shift===shift &&
-      !p.name.toLowerCase().includes("sri diah") && !p.name.toLowerCase().includes("indrakila")
+      !p.name.toLowerCase().includes("sri diah") && !p.name.toLowerCase().includes("indrakila") &&
+      !protectedNames.has(p.name)
     ).slice(0, n);
   }
 
@@ -885,22 +913,58 @@ function applyManualOverrides(people){
     "cashier": "Cashier",
     "hostess": "Hostess",
   };
+  // Specific-area targets: bypasses normal cycling and pins the person to this exact section.
+  const SPECIFIC_AREA_ALIASES = {
+    "server pool": {rowKey:"Server-Pool", category:"Server"},
+    "server lounge": {rowKey:"Server-Lounge", category:"Server"},
+    "server dining": {rowKey:"Server-Dining", category:"Server"},
+    "server sundeck": {rowKey:"Server-Sundeck", category:"Server"},
+    "floating pool": {rowKey:"Floating-Pool", category:"Floater Runner"},
+    "floating lounge": {rowKey:"Floating-Lounge", category:"Floater Runner"},
+    "floating dining": {rowKey:"Floating-Dining", category:"Floater Runner"},
+    "cashier main": {rowKey:"Cashier-Main", category:"Cashier"},
+    "cashier pool": {rowKey:"Cashier-Pool", category:"Cashier"},
+    "cashier lounge": {rowKey:"Cashier-Lounge", category:"Cashier"},
+    "cashier dining": {rowKey:"Cashier-Dining", category:"Cashier"},
+    "hostess desk": {rowKey:"Hostess-Desk", category:"Hostess"},
+    "hostess pool": {rowKey:"Hostess-Pool", category:"Hostess"},
+    "hostess lounge": {rowKey:"Hostess-Lounge", category:"Hostess"},
+    "hostess dining": {rowKey:"Hostess-Dining", category:"Hostess"},
+    "food pass checker": {rowKey:"Checker-FoodPass", category:"Checker"},
+    "beverage pass checker": {rowKey:"Checker-BeveragePass", category:"Checker"},
+    "food pass runner": {rowKey:"Runner-FoodPass", category:"Runner"},
+    "beverage pass runner": {rowKey:"Runner-BeveragePass", category:"Runner"},
+  };
   const notes = [];
+  const forcedPlacements = []; // {name, shift, rowKey}
+  const protectedNames = new Set();
   raw.split("\n").map(l=>l.trim()).filter(Boolean).forEach(line=>{
     const parts = line.split("-").map(s=>s.trim());
     if(parts.length < 3) return;
     const namePart = parts[0].toLowerCase();
     const shiftPart = parts[1];
-    const categoryPart = CATEGORY_ALIASES[parts[2].toLowerCase()];
-    if(!categoryPart) return;
+    const targetText = parts[2].toLowerCase();
     const person = people.find(p => p.shift === shiftPart && p.name.toLowerCase().includes(namePart));
-    if(person){
+    if(!person) return;
+
+    const specific = SPECIFIC_AREA_ALIASES[targetText];
+    if(specific){
       const from = person.category;
-      person.category = categoryPart;
-      notes.push(person.name + ": manually moved from " + from + " to " + categoryPart + " for the " + shiftPart + " shift");
+      person.category = specific.category;
+      forcedPlacements.push({name: person.name, shift: person.shift, rowKey: specific.rowKey});
+      protectedNames.add(person.name);
+      notes.push(person.name + ": manually pinned to " + specific.rowKey.replace("-"," ") + " for the " + shiftPart + " shift (was " + from + ")");
+      return;
     }
+
+    const categoryPart = CATEGORY_ALIASES[targetText];
+    if(!categoryPart) return;
+    const from = person.category;
+    person.category = categoryPart;
+    protectedNames.add(person.name);
+    notes.push(person.name + ": manually moved from " + from + " to " + categoryPart + " for the " + shiftPart + " shift");
   });
-  return notes;
+  return {notes, forcedPlacements, protectedNames};
 }
 
 let cashierSPVNames = new Set(); // names originally scheduled as "Cashier SPV", tracked for a dedicated duty override
@@ -975,9 +1039,11 @@ function recordWeeklyHistory(assign){
 }
 
 function doGenerate(){
-  const overrideNotes = applyManualOverrides(peopleForDate);
+  const overrideResult = applyManualOverrides(peopleForDate);
+  const overrideNotes = overrideResult.notes;
+  const forcedPlacements = overrideResult.forcedPlacements;
   resolveCashierSPV(peopleForDate);
-  const coverage = applyCoverage(peopleForDate);
+  const coverage = applyCoverage(peopleForDate, overrideResult.protectedNames);
   const workingPeople = coverage.people;
   const starReasons = new Map(); // name -> reason (single unified "extra duty" note used everywhere)
   coverage.starNotes.forEach(n => starReasons.set(n.name, n.reason));
@@ -1017,6 +1083,10 @@ function doGenerate(){
   const assign = {};
   rows.forEach(r => assign[r.key] = {});
   const fixedNames = new Set();
+  forcedPlacements.forEach(({name, shift, rowKey})=>{
+    (assign[rowKey][shift] = assign[rowKey][shift] || []).push(name);
+    fixedNames.add(name);
+  });
   const notes = [];
 
   ["sriDiah","indrakila"].forEach(key=>{
@@ -1174,7 +1244,7 @@ function doGenerate(){
   // filled in priority order Pool first, then Lounge, then Dining. Peak-hour surplus -> becomes Food/Beverage Runner.
   // Di luar peak hour: pakai distributePoolLoungeDining biasa (pagi->Lounge, sore->Pool).
   function assignFloaterAreas(){
-    const pool = workingPeople.filter(p => p.category === "Floater Runner");
+    const pool = workingPeople.filter(p => p.category === "Floater Runner" && !fixedNames.has(p.name));
 
     const m6Pool = pool.filter(p => p.shift === "M6");
     const m11Pool = pool.filter(p => p.shift === "M11");
@@ -1467,7 +1537,124 @@ function doGenerate(){
   );
 
   recordWeeklyHistory(assign);
+  const breakData = computeBreaksAndManning(rows, assign);
+  renderBreakSchedule(breakData);
+  renderManningTable(breakData);
   renderBoard(rows, assign, shifts, notes, additionalNotes, starReasons, unassignedWarnings);
+}
+
+// ---------- Break scheduling + Manning Per Hour ----------
+// Every shift is a fixed 8-hour span (7 hours work + 1 hour break). Breaks are auto-staggered
+// per section so that whenever 2+ people overlap, at least 1 stays active -- avoiding the
+// "everyone on break at once" gap. If a section only ever has 1 person covering, their break
+// is set to the middle of their shift since a gap is unavoidable either way.
+function computeBreaksAndManning(rows, assign){
+  const rowWindows = {}; // rowKey -> [{name, shift, start, end}]
+  rows.forEach(r=>{
+    const list = [];
+    Object.keys(assign[r.key] || {}).forEach(shift=>{
+      const win = shiftWindow(shift);
+      if(!win) return;
+      (assign[r.key][shift] || []).forEach(name=>{
+        list.push({name, shift, start: win.start, end: win.end});
+      });
+    });
+    rowWindows[r.key] = list;
+  });
+
+  const breakSchedule = new Map(); // name -> {hour, rowKey, label}
+  const rowLabelOf = {};
+  rows.forEach(r => rowLabelOf[r.key] = r.label);
+
+  Object.keys(rowWindows).forEach(rowKey=>{
+    const people = rowWindows[rowKey];
+    if(people.length === 0) return;
+    const assignedHour = {}; // name -> hour, scoped to this row
+    const minStart = Math.min(...people.map(p=>p.start));
+    const maxEnd = Math.max(...people.map(p=>p.end));
+    for(let h = minStart; h < maxEnd; h++){
+      const onDutyNoBreak = people.filter(p => p.start <= h && h < p.end && !(p.name in assignedHour));
+      if(onDutyNoBreak.length === 0) continue;
+      const totalOnDuty = people.filter(p => p.start <= h && h < p.end).length;
+      const onBreakNow = Object.values(assignedHour).filter(bh=>bh===h).length;
+      const activeNow = totalOnDuty - onBreakNow;
+      if(activeNow > 1){
+        onDutyNoBreak.sort((a,b)=>a.end-b.end); // whoever finishes soonest gets priority for an earlier break
+        const person = onDutyNoBreak[0];
+        if(h > person.start && h < person.end - 1){ // leave at least an hour of buffer at each end
+          assignedHour[person.name] = h;
+        }
+      }
+    }
+    // anyone left without a break (solo coverage the whole shift) -> default to the middle of their shift
+    people.forEach(p=>{
+      if(!(p.name in assignedHour)){
+        assignedHour[p.name] = p.start + 4; // middle of the 8-hour shift
+      }
+    });
+    Object.keys(assignedHour).forEach(name=>{
+      breakSchedule.set(name, {hour: assignedHour[name], rowKey, label: rowLabelOf[rowKey]});
+    });
+  });
+
+  return {rowWindows, breakSchedule, rowLabelOf};
+}
+
+function renderBreakSchedule(breakData){
+  const table = document.getElementById("breakScheduleTable");
+  if(!table) return;
+  const entries = [];
+  Object.keys(breakData.rowWindows).forEach(rowKey=>{
+    breakData.rowWindows[rowKey].forEach(p=>{
+      const brk = breakData.breakSchedule.get(p.name);
+      if(brk && brk.rowKey === rowKey){
+        entries.push({name:p.name, label: breakData.rowLabelOf[rowKey], shift:p.shift, hour: brk.hour});
+      }
+    });
+  });
+  entries.sort((a,b)=> a.hour - b.hour);
+  let html = "<thead><tr><th>Name</th><th>Position</th><th>Shift</th><th>Break Time</th></tr></thead><tbody>";
+  entries.forEach(e=>{
+    html += "<tr><td>"+e.name+"</td><td class=\"pos\">"+e.label+"</td><td>"+e.shift+"</td><td>"+formatHour(e.hour)+"</td></tr>";
+  });
+  html += "</tbody>";
+  table.innerHTML = html;
+}
+
+function renderManningTable(breakData){
+  const table = document.getElementById("manningTable");
+  if(!table) return;
+  let minH = Infinity, maxH = -Infinity;
+  Object.values(breakData.rowWindows).forEach(list=>{
+    list.forEach(p=>{ minH = Math.min(minH, p.start); maxH = Math.max(maxH, p.end); });
+  });
+  if(!isFinite(minH)){ table.innerHTML = ""; return; }
+  const hours = [];
+  for(let h = Math.floor(minH); h < Math.ceil(maxH); h++){ hours.push(h); }
+
+  const activeRowKeys = Object.keys(breakData.rowWindows).filter(rk => breakData.rowWindows[rk].length > 0);
+
+  let html = "<thead><tr><th>Section</th>";
+  hours.forEach(h => html += "<th>" + formatHour(h) + "</th>");
+  html += "</tr></thead><tbody>";
+  activeRowKeys.forEach(rowKey=>{
+    const people = breakData.rowWindows[rowKey];
+    html += "<tr><td class=\"pos\">" + breakData.rowLabelOf[rowKey] + "</td>";
+    hours.forEach(h=>{
+      const activeCount = people.filter(p=>{
+        if(!(p.start <= h && h < p.end)) return false;
+        const brk = breakData.breakSchedule.get(p.name);
+        if(brk && brk.rowKey === rowKey && Math.floor(brk.hour) === h) return false;
+        return true;
+      }).length;
+      const cellClass = activeCount === 0 ? "name" : "name";
+      const style = activeCount === 0 ? " style=\"color:var(--bad); font-weight:700;\"" : "";
+      html += "<td class=\""+cellClass+"\"" + style + ">" + (activeCount || "\u2013") + "</td>";
+    });
+    html += "</tr>";
+  });
+  html += "</tbody>";
+  table.innerHTML = html;
 }
 
 let boardState = null; // {rows, assign, shifts, starReasons} -- kept around so swaps can redraw
@@ -1867,17 +2054,40 @@ const DUTY_MATRIX_SPEC = [
   {label:"Hostess", rowKeys:HOSTESS_ROWS, shifts:["M7","M10","M11","MD12","E2"]},
 ];
 
+let customDutyRows = []; // [{id, label, shift}] -- user-added rows, reference-only (not tied to real board assignment)
+
+async function loadCustomDutyRows(){
+  try{
+    if(window.storage){
+      const saved = await window.storage.get("custom_duty_rows", false);
+      if(saved && saved.value){
+        const arr = JSON.parse(saved.value);
+        if(Array.isArray(arr)) customDutyRows = arr;
+      }
+    }
+  }catch(e){ /* none yet */ }
+}
+
+function saveCustomDutyRows(){
+  try{ window.storage && window.storage.set("custom_duty_rows", JSON.stringify(customDutyRows), false); }catch(e){}
+}
+
 function dutyMatrixRows(){
   const out = [];
   DUTY_MATRIX_SPEC.forEach(spec=>{
     spec.shifts.forEach(shift=>{
-      out.push({label: spec.label, shift, rowKeys: spec.rowKeys, key: spec.label + " " + shift});
+      out.push({label: spec.label, shift, rowKeys: spec.rowKeys, key: spec.label + " " + shift, custom:false});
     });
+  });
+  customDutyRows.forEach(c=>{
+    const pseudoKey = "Custom-" + c.id;
+    out.push({label: c.label, shift: c.shift, rowKeys: [pseudoKey], key: c.label + " " + c.shift, custom:true, id:c.id});
   });
   return out;
 }
 
 async function loadDutyOverrides(){
+  await loadCustomDutyRows();
   try{
     if(window.storage){
       const saved = await window.storage.get("duty_overrides", false);
@@ -1906,16 +2116,24 @@ function saveDutyOverrides(){
 function buildDutyMatrixEditor(){
   const container = document.getElementById("dutyMatrixContainer");
   if(!container) return;
-  let html = "<table class=\"duty-matrix\"><thead><tr><th>Position / Shift</th><th>Opening Duties</th><th>Closing Duties</th></tr></thead><tbody>";
+  let html = "<table class=\"duty-matrix\"><thead><tr><th>Position / Shift</th><th>Opening Duties</th><th>Closing Duties</th><th></th></tr></thead><tbody>";
   dutyMatrixRows().forEach(row=>{
     const d = getDuty(row.rowKeys[0], row.shift);
     html += "<tr>" +
-      "<td class=\"pos\">" + row.label + " " + row.shift + "</td>" +
+      "<td class=\"pos\">" + row.label + " " + row.shift + (row.custom ? " <span style=\"font-weight:400; font-style:italic; font-size:10px;\">(custom, reference only)</span>" : "") + "</td>" +
       "<td><textarea data-key=\"" + row.key + "\" data-field=\"opening\">" + d.opening.replace(/</g,"&lt;") + "</textarea></td>" +
       "<td><textarea data-key=\"" + row.key + "\" data-field=\"closing\">" + d.closing.replace(/</g,"&lt;") + "</textarea></td>" +
+      "<td>" + (row.custom ? "<button type=\"button\" class=\"btn-ghost delete-custom-row\" data-id=\"" + row.id + "\" style=\"padding:2px 8px; font-size:11px;\">\u2715</button>" : "") + "</td>" +
       "</tr>";
   });
   html += "</tbody></table>";
+  html += "<div style=\"margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;\">" +
+    "<input type=\"text\" id=\"newDutyLabel\" placeholder=\"New position name (e.g. Valet)\" style=\"flex:1; min-width:160px;\">" +
+    "<input type=\"text\" id=\"newDutyShift\" placeholder=\"Shift (e.g. M11, or ANY)\" style=\"width:120px;\">" +
+    "<button class=\"btn-primary\" id=\"addDutyRowBtn\" type=\"button\" style=\"padding:6px 12px; font-size:12px;\">+ Add Position</button>" +
+    "</div>" +
+    "<div class=\"rule-summary\">New positions are reference-only \u2014 they let you write down duties for a new role right away, " +
+    "but actually placing staff into that role on the board still needs the assignment logic added (ask to have that wired up).</div>";
   container.innerHTML = html;
 
   container.querySelectorAll("textarea").forEach(ta=>{
@@ -1931,6 +2149,27 @@ function buildDutyMatrixEditor(){
       saveDutyOverrides();
     });
   });
+
+  container.querySelectorAll(".delete-custom-row").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      customDutyRows = customDutyRows.filter(c => String(c.id) !== btn.dataset.id);
+      saveCustomDutyRows();
+      buildDutyMatrixEditor();
+    });
+  });
+
+  const addBtn = document.getElementById("addDutyRowBtn");
+  if(addBtn){
+    addBtn.addEventListener("click", ()=>{
+      const label = document.getElementById("newDutyLabel").value.trim();
+      const shift = document.getElementById("newDutyShift").value.trim() || "ANY";
+      if(!label) return;
+      const id = Date.now() + "_" + Math.random().toString(36).slice(2,7);
+      customDutyRows.push({id, label, shift});
+      saveCustomDutyRows();
+      buildDutyMatrixEditor();
+    });
+  }
 }
 
 function importDutiesFromPaste(){
@@ -1985,29 +2224,29 @@ loadWeeklyHistory();
 
 function renderDuties(personNumbers, personInfo){
   const table = document.getElementById("dutiesTable");
-  let html = "<thead><tr><th>No.</th><th>Opening Duties</th><th>Closing Duties</th></tr></thead><tbody>";
+  let html = "<thead><tr><th>Name(s)</th><th>Opening Duties</th><th>Closing Duties</th></tr></thead><tbody>";
 
   const sortedNames = [...personNumbers.keys()].sort((a,b)=> personNumbers.get(a) - personNumbers.get(b));
 
   // group people who end up with the exact same Opening+Closing text, so we don't repeat
   // the same paragraph once per person -- keeps the printed sheet much shorter.
-  const groups = new Map(); // "openingText||closingText" -> {opening, closing, nums:[]}
+  const groups = new Map(); // "openingText||closingText" -> {opening, closing, names:[], firstNum}
   sortedNames.forEach(name=>{
     const num = personNumbers.get(name);
     const info = personInfo.get(name);
     const duty = getDuty(info.rowKey, info.shift);
 
     const key = duty.opening + "||" + duty.closing;
-    if(!groups.has(key)) groups.set(key, {opening: duty.opening, closing: duty.closing, nums: []});
-    groups.get(key).nums.push(num);
+    if(!groups.has(key)) groups.set(key, {opening: duty.opening, closing: duty.closing, names: [], firstNum: num});
+    groups.get(key).names.push(name);
   });
 
-  // keep groups ordered by their first (lowest) number for a predictable read order
-  const orderedGroups = [...groups.values()].sort((a,b)=> Math.min(...a.nums) - Math.min(...b.nums));
+  // keep groups ordered by whichever person appears earliest on the board, for a predictable read order
+  const orderedGroups = [...groups.values()].sort((a,b)=> a.firstNum - b.firstNum);
 
   orderedGroups.forEach(g=>{
-    const numsLabel = g.nums.map(n=>"("+n+")").join(" ");
-    html += "<tr><td class=\"person-num\">" + numsLabel + "</td>" +
+    const namesLabel = g.names.join("<br>");
+    html += "<tr><td style=\"text-align:left; font-size:12px;\">" + namesLabel + "</td>" +
       "<td style=\"text-align:left; font-size:12px;\">" + g.opening + "</td>" +
       "<td style=\"text-align:left; font-size:12px;\">" + g.closing + "</td></tr>";
   });
