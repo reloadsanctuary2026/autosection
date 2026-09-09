@@ -275,14 +275,8 @@
       <table id="dutiesTable"></table>
     </div>
 
-    <h2 style="margin-top:22px;">BREAK SCHEDULE</h2>
-    <p class="rule-summary">Auto-staggered so every section always keeps at least 1 person active. Manually adjust only for urgent floor situations.</p>
-    <div style="overflow-x:auto;">
-      <table id="breakScheduleTable"></table>
-    </div>
-
     <h2 style="margin-top:22px;">MANNING PER HOUR</h2>
-    <p class="rule-summary">Headcount actively on duty each hour, after accounting for the break schedule above.</p>
+    <p class="rule-summary">Headcount actively on duty each hour, after accounting for each person's break time (see Break column above).</p>
     <div style="overflow-x:auto;">
       <table id="manningTable"></table>
     </div>
@@ -988,6 +982,7 @@ function resolveCashierSPV(people){
 }
 
 let weeklySectionHistory = {}; // {weekKey: {dateKey: {name: {Pool,Lounge,Dining,Sundeck}}}}
+let latestBreakData = null; // {rowWindows, breakSchedule, rowLabelOf} from computeBreaksAndManning, used by renderDuties
 
 function getWeekKey(){
   return dateColumns.map(d=>d.date).slice().sort((a,b)=>a-b).join("-");
@@ -1537,9 +1532,8 @@ function doGenerate(){
   );
 
   recordWeeklyHistory(assign);
-  const breakData = computeBreaksAndManning(rows, assign);
-  renderBreakSchedule(breakData);
-  renderManningTable(breakData);
+  latestBreakData = computeBreaksAndManning(rows, assign);
+  renderManningTable(latestBreakData);
   renderBoard(rows, assign, shifts, notes, additionalNotes, starReasons, unassignedWarnings);
 }
 
@@ -1600,26 +1594,7 @@ function computeBreaksAndManning(rows, assign){
   return {rowWindows, breakSchedule, rowLabelOf};
 }
 
-function renderBreakSchedule(breakData){
-  const table = document.getElementById("breakScheduleTable");
-  if(!table) return;
-  const entries = [];
-  Object.keys(breakData.rowWindows).forEach(rowKey=>{
-    breakData.rowWindows[rowKey].forEach(p=>{
-      const brk = breakData.breakSchedule.get(p.name);
-      if(brk && brk.rowKey === rowKey){
-        entries.push({name:p.name, label: breakData.rowLabelOf[rowKey], shift:p.shift, hour: brk.hour});
-      }
-    });
-  });
-  entries.sort((a,b)=> a.hour - b.hour);
-  let html = "<thead><tr><th>Name</th><th>Position</th><th>Shift</th><th>Break Time</th></tr></thead><tbody>";
-  entries.forEach(e=>{
-    html += "<tr><td>"+e.name+"</td><td class=\"pos\">"+e.label+"</td><td>"+e.shift+"</td><td>"+formatHour(e.hour)+"</td></tr>";
-  });
-  html += "</tbody>";
-  table.innerHTML = html;
-}
+
 
 function renderManningTable(breakData){
   const table = document.getElementById("manningTable");
@@ -2224,31 +2199,26 @@ loadWeeklyHistory();
 
 function renderDuties(personNumbers, personInfo){
   const table = document.getElementById("dutiesTable");
-  let html = "<thead><tr><th>Name(s)</th><th>Opening Duties</th><th>Closing Duties</th></tr></thead><tbody>";
+  let html = "<thead><tr><th>Name</th><th>Break Time</th><th>Opening Duties</th><th>Closing Duties</th></tr></thead><tbody>";
 
   const sortedNames = [...personNumbers.keys()].sort((a,b)=> personNumbers.get(a) - personNumbers.get(b));
 
-  // group people who end up with the exact same Opening+Closing text, so we don't repeat
-  // the same paragraph once per person -- keeps the printed sheet much shorter.
-  const groups = new Map(); // "openingText||closingText" -> {opening, closing, names:[], firstNum}
-  sortedNames.forEach(name=>{
-    const num = personNumbers.get(name);
+  const entries = sortedNames.map(name=>{
     const info = personInfo.get(name);
     const duty = getDuty(info.rowKey, info.shift);
-
-    const key = duty.opening + "||" + duty.closing;
-    if(!groups.has(key)) groups.set(key, {opening: duty.opening, closing: duty.closing, names: [], firstNum: num});
-    groups.get(key).names.push(name);
+    let breakHour = null;
+    if(latestBreakData){
+      const brk = latestBreakData.breakSchedule.get(name);
+      if(brk) breakHour = brk.hour;
+    }
+    return {name, opening: duty.opening, closing: duty.closing, breakHour};
   });
 
-  // keep groups ordered by whichever person appears earliest on the board, for a predictable read order
-  const orderedGroups = [...groups.values()].sort((a,b)=> a.firstNum - b.firstNum);
-
-  orderedGroups.forEach(g=>{
-    const namesLabel = g.names.join("<br>");
-    html += "<tr><td style=\"text-align:left; font-size:12px;\">" + namesLabel + "</td>" +
-      "<td style=\"text-align:left; font-size:12px;\">" + g.opening + "</td>" +
-      "<td style=\"text-align:left; font-size:12px;\">" + g.closing + "</td></tr>";
+  entries.forEach(e=>{
+    html += "<tr><td style=\"text-align:left; font-size:12px;\">" + e.name + "</td>" +
+      "<td style=\"font-size:12px;\">" + (e.breakHour !== null ? formatHour(e.breakHour) : "\u2013") + "</td>" +
+      "<td style=\"text-align:left; font-size:12px;\">" + e.opening + "</td>" +
+      "<td style=\"text-align:left; font-size:12px;\">" + e.closing + "</td></tr>";
   });
 
   html += "</tbody>";
