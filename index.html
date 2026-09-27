@@ -195,7 +195,7 @@
     </div>
   </div>
 
-  <div class="settings-toggle" id="settingsToggle">
+  <div class="settings-toggle tier-gated" id="settingsToggle">
     <span id="settingsToggleIcon">⚙</span> Rule-of-thumb settings (saved automatically, no need to repeat every time you generate a section)
   </div>
   <div class="card hidden" id="settingsCard">
@@ -208,7 +208,7 @@
     <div class="chip-row" id="specialRuleToggles"></div>
   </div>
 
-  <div class="settings-toggle" id="dutyEditorToggle">
+  <div class="settings-toggle tier-gated" id="dutyEditorToggle">
     <span id="dutyEditorToggleIcon">📝</span> Side Duties Editor (edit directly, or import/export a spreadsheet)
   </div>
   <div class="card hidden" id="dutyEditorCard">
@@ -253,9 +253,11 @@
   <div class="card hidden" id="confirmCard">
     <h2><span class="step-badge">3</span>CONFIRM SPECIAL RULES</h2>
     <div id="rulesContainer"></div>
-    <label style="margin-top:14px;">Manual overrides (optional) — for things noted only as a comment in your sheet, since comments don't survive copy-paste</label>
-    <textarea id="manualOverridesInput" style="min-height:70px;" placeholder="One per line: Name - Shift - Section&#10;e.g. Perdamiano - MD12 - Floating"></textarea>
-    <div class="hint">Format: <code>Name - Shift - Section</code>. Section can be Server, Floater Runner (or "Floating"), Checker, Runner, Cashier, or Hostess. This actually moves that person into the new section, on top of the normal auto-assignment.</div>
+    <div class="tier-gated">
+      <label style="margin-top:14px;">Manual overrides (optional) — for things noted only as a comment in your sheet, since comments don't survive copy-paste</label>
+      <textarea id="manualOverridesInput" style="min-height:70px;" placeholder="One per line: Name - Shift - Section&#10;e.g. Perdamiano - MD12 - Floating"></textarea>
+      <div class="hint">Format: <code>Name - Shift - Section</code>. Section can be Server, Floater Runner (or "Floating"), Checker, Runner, Cashier, or Hostess. This actually moves that person into the new section, on top of the normal auto-assignment.</div>
+    </div>
     <div class="btn-row">
       <button class="btn-primary" id="generateBtn">Generate Sections</button>
       <button class="btn-ghost" id="backBtn">Back</button>
@@ -327,6 +329,33 @@ if(!window.storage){
       }catch(e){ return null; }
     }
   };
+}
+
+// ---------- Reload F&B Tools hub integration ----------
+// When embedded as an iframe inside the Hub, the Hub is expected to postMessage:
+//   { type: "reload-fb-auth", nik: "...", name: "...", tier: "Leader"|"Management"|"Executive"|... }
+// after receiving our "auto-section-ready" handshake. Standalone (outside the Hub, e.g. testing
+// on GitHub Pages directly) gets full edit access by default, since no auth message will ever arrive.
+let hubUser = null; // {nik, name, tier} once received from the Hub, else null
+const EDIT_TIERS = ["Management", "Executive"];
+function canEditConfig(){
+  return !hubUser || EDIT_TIERS.includes(hubUser.tier);
+}
+function applyTierGating(){
+  const gated = document.querySelectorAll(".tier-gated");
+  gated.forEach(el=>{
+    el.style.display = canEditConfig() ? "" : "none";
+  });
+}
+window.addEventListener("message", (event)=>{
+  const data = event.data;
+  if(data && data.type === "reload-fb-auth"){
+    hubUser = {nik: data.nik, name: data.name, tier: data.tier};
+    applyTierGating();
+  }
+});
+if(window.parent !== window){
+  try{ window.parent.postMessage({type:"auto-section-ready"}, "*"); }catch(e){}
 }
 
 const ALL_SHIFTS = ["M6","M6.30","M7","M8","M9","M10","M11","MD12","MD13","E2"];
