@@ -192,11 +192,12 @@
     <div class="brand-text">
       <h1 id="mainTitle">Section F&amp;B</h1>
       <p class="sub">Paste directly from Google Sheets → select date → confirm special rules → sections are generated automatically based on the rule of thumb.</p>
+      <p class="sub" style="font-size:10.5px; opacity:0.7;">v4.0</p>
     </div>
   </div>
 
   <div class="settings-toggle tier-gated" id="settingsToggle">
-    <span id="settingsToggleIcon">⚙</span> Rule-of-thumb settings (saved automatically, no need to repeat every time you generate a section)
+    <span id="settingsToggleIcon">⚙</span> Settings (saved automatically, no need to repeat every time you generate a section)
   </div>
   <div class="card hidden" id="settingsCard">
     <label>Which shifts overlap 11:00–17:00? (Sundeck is only staffed during these shifts)</label>
@@ -206,13 +207,13 @@
     </div>
     <label style="margin-top:14px;">Special staff rules (uncheck to pause, Delete to remove, or add a new one below)</label>
     <div class="chip-row" id="specialRuleToggles"></div>
-  </div>
 
-  <div class="settings-toggle tier-gated" id="dutyEditorToggle">
-    <span id="dutyEditorToggleIcon">📝</span> Side Duties Editor (edit directly, or import/export a spreadsheet)
-  </div>
-  <div class="card hidden" id="dutyEditorCard">
-    <div class="hint">
+    <label style="margin-top:22px;">Sections you use (uncheck any your venue no longer needs)</label>
+    <div class="chip-row" id="sectionManagerContainer" style="margin-top:8px;"></div>
+    <div class="rule-summary">If real staff ever end up assigned to a hidden section on a given day, it shows up anyway for that day so nobody silently disappears from the schedule.</div>
+
+    <label style="margin-top:22px;">Side Duties Editor (edit directly, or import/export a spreadsheet)</label>
+    <div class="hint" style="margin-top:6px;">
       Edit any cell directly below and it saves automatically. Or paste rows copied from your spreadsheet
       (format: <code>Position / Shift</code>, <code>Opening Duties</code>, <code>Closing Duties</code> — same
       layout as the Side Duties Database) to update many at once.
@@ -224,17 +225,6 @@
     </div>
     <div id="dutyImportStatus" class="rule-summary" style="color:var(--good); font-weight:700;"></div>
     <div id="dutyMatrixContainer" style="overflow-x:auto; margin-top:14px;"></div>
-  </div>
-
-  <div class="settings-toggle tier-gated" id="sectionManagerToggle">
-    <span id="sectionManagerToggleIcon">🗂</span> Manage Board Sections (hide sections your venue no longer uses)
-  </div>
-  <div class="card hidden" id="sectionManagerCard">
-    <div class="hint">
-      Uncheck a section to hide it from the board and reports. If real staff ever end up assigned there on a
-      given day, it shows up anyway for that day so nobody silently disappears from the schedule.
-    </div>
-    <div class="chip-row" id="sectionManagerContainer" style="margin-top:10px;"></div>
   </div>
 
   <div class="card" id="inputCard">
@@ -565,21 +555,8 @@ document.getElementById("settingsToggle").addEventListener("click", ()=>{
   icon.textContent = card.classList.contains("hidden") ? "\u2699" : "\u2715";
 });
 
-document.getElementById("dutyEditorToggle").addEventListener("click", ()=>{
-  const card = document.getElementById("dutyEditorCard");
-  const icon = document.getElementById("dutyEditorToggleIcon");
-  card.classList.toggle("hidden");
-  icon.textContent = card.classList.contains("hidden") ? "\ud83d\udcdd" : "\u2715";
-});
 document.getElementById("dutyImportBtn").addEventListener("click", importDutiesFromPaste);
 document.getElementById("dutyExportBtn").addEventListener("click", exportDutiesToCSV);
-
-document.getElementById("sectionManagerToggle").addEventListener("click", ()=>{
-  const card = document.getElementById("sectionManagerCard");
-  const icon = document.getElementById("sectionManagerToggleIcon");
-  card.classList.toggle("hidden");
-  icon.textContent = card.classList.contains("hidden") ? "\ud83d\uddc2" : "\u2715";
-});
 
 // ---------- role normalization ----------
 function normRole(raw){
