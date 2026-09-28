@@ -226,6 +226,17 @@
     <div id="dutyMatrixContainer" style="overflow-x:auto; margin-top:14px;"></div>
   </div>
 
+  <div class="settings-toggle tier-gated" id="sectionManagerToggle">
+    <span id="sectionManagerToggleIcon">🗂</span> Manage Board Sections (hide sections your venue no longer uses)
+  </div>
+  <div class="card hidden" id="sectionManagerCard">
+    <div class="hint">
+      Uncheck a section to hide it from the board and reports. If real staff ever end up assigned there on a
+      given day, it shows up anyway for that day so nobody silently disappears from the schedule.
+    </div>
+    <div class="chip-row" id="sectionManagerContainer" style="margin-top:10px;"></div>
+  </div>
+
   <div class="card" id="inputCard">
     <h2><span class="step-badge">1</span>PASTE SCHEDULE</h2>
     <label>Paste directly from Google Sheets (select cells from the NO column through the date columns, copy, paste here)</label>
@@ -562,6 +573,13 @@ document.getElementById("dutyEditorToggle").addEventListener("click", ()=>{
 });
 document.getElementById("dutyImportBtn").addEventListener("click", importDutiesFromPaste);
 document.getElementById("dutyExportBtn").addEventListener("click", exportDutiesToCSV);
+
+document.getElementById("sectionManagerToggle").addEventListener("click", ()=>{
+  const card = document.getElementById("sectionManagerCard");
+  const icon = document.getElementById("sectionManagerToggleIcon");
+  card.classList.toggle("hidden");
+  icon.textContent = card.classList.contains("hidden") ? "\ud83d\uddc2" : "\u2715";
+});
 
 // ---------- role normalization ----------
 function normRole(raw){
@@ -1062,7 +1080,71 @@ function recordWeeklyHistory(assign){
   saveWeeklyHistory();
 }
 
+const BOARD_ROWS = [
+  {key:"Manager", label:"MANAGER ON DUTY", group:"MANAGEMENT", swapGroup:"MANAGEMENT", moveGroup:"MANAGEMENT"},
+  {key:"SPV", label:"SPV", group:"MANAGEMENT", swapGroup:"MANAGEMENT", moveGroup:"MANAGEMENT"},
+  {key:"Server-Sundeck", label:"SERVER \u2013 SUNDECK", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
+  {key:"Server-Pool", label:"SERVER \u2013 POOL", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
+  {key:"Server-Lounge", label:"SERVER \u2013 LOUNGE", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
+  {key:"Server-Dining", label:"SERVER \u2013 DINING", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
+  {key:"Floating-Pool", label:"FLOATING \u2013 POOL", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
+  {key:"Floating-Lounge", label:"FLOATING \u2013 LOUNGE", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
+  {key:"Floating-Dining", label:"FLOATING \u2013 DINING", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
+  {key:"Cashier-Main", label:"MAIN CASHIER", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
+  {key:"Cashier-Pool", label:"CASHIER \u2013 POOL", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
+  {key:"Cashier-Lounge", label:"CASHIER \u2013 LOUNGE", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
+  {key:"Cashier-Dining", label:"CASHIER \u2013 DINING", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
+  {key:"Hostess-Desk", label:"HOSTESS DESK", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
+  {key:"Hostess-Pool", label:"HOSTESS \u2013 POOL", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
+  {key:"Hostess-Lounge", label:"HOSTESS \u2013 LOUNGE", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
+  {key:"Hostess-Dining", label:"HOSTESS \u2013 DINING", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
+  {key:"Checker-FoodPass", label:"FOOD PASS \u2013 CHECKER", group:"FOOD & BEVERAGE PASS", swapGroup:"CHECKER", moveGroup:"SRC"},
+  {key:"Runner-FoodPass", label:"FOOD PASS \u2013 RUNNER", group:"FOOD & BEVERAGE PASS", swapGroup:"RUNNER", moveGroup:"SRC"},
+  {key:"Checker-BeveragePass", label:"BEVERAGE PASS \u2013 CHECKER", group:"FOOD & BEVERAGE PASS", swapGroup:"CHECKER", moveGroup:"SRC"},
+  {key:"Runner-BeveragePass", label:"BEVERAGE PASS \u2013 RUNNER", group:"FOOD & BEVERAGE PASS", swapGroup:"RUNNER", moveGroup:"SRC"},
+];
+
+let hiddenRowKeys = new Set(); // rowKeys hidden from the board by the user, persisted
+
+async function loadHiddenRows(){
+  try{
+    if(window.storage){
+      const saved = await window.storage.get("hidden_board_rows", false);
+      if(saved && saved.value){
+        const arr = JSON.parse(saved.value);
+        if(Array.isArray(arr)) hiddenRowKeys = new Set(arr);
+      }
+    }
+  }catch(e){ /* none hidden yet */ }
+  buildSectionManagerUI();
+}
+
+function saveHiddenRows(){
+  try{ window.storage && window.storage.set("hidden_board_rows", JSON.stringify([...hiddenRowKeys]), false); }catch(e){}
+}
+
+function buildSectionManagerUI(){
+  const container = document.getElementById("sectionManagerContainer");
+  if(!container) return;
+  container.innerHTML = "";
+  BOARD_ROWS.forEach(r=>{
+    const label = document.createElement("label");
+    label.className = "chip";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !hiddenRowKeys.has(r.key);
+    cb.addEventListener("change", ()=>{
+      if(cb.checked) hiddenRowKeys.delete(r.key); else hiddenRowKeys.add(r.key);
+      saveHiddenRows();
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(r.label));
+    container.appendChild(label);
+  });
+}
+
 function doGenerate(){
+  const rows = BOARD_ROWS;
   const overrideResult = applyManualOverrides(peopleForDate);
   const overrideNotes = overrideResult.notes;
   const forcedPlacements = overrideResult.forcedPlacements;
@@ -1080,29 +1162,6 @@ function doGenerate(){
   const shiftSet = new Set(workingPeople.map(p=>p.shift));
   const shifts = ALL_SHIFTS.filter(s=>shiftSet.has(s)).concat([...shiftSet].filter(s=>!ALL_SHIFTS.includes(s)));
 
-  const rows = [
-    {key:"Manager", label:"MANAGER ON DUTY", group:"MANAGEMENT", swapGroup:"MANAGEMENT", moveGroup:"MANAGEMENT"},
-    {key:"SPV", label:"SPV", group:"MANAGEMENT", swapGroup:"MANAGEMENT", moveGroup:"MANAGEMENT"},
-    {key:"Server-Sundeck", label:"SERVER \u2013 SUNDECK", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
-    {key:"Server-Pool", label:"SERVER \u2013 POOL", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
-    {key:"Server-Lounge", label:"SERVER \u2013 LOUNGE", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
-    {key:"Server-Dining", label:"SERVER \u2013 DINING", group:"SERVER", swapGroup:"SERVER", moveGroup:"SRC"},
-    {key:"Floating-Pool", label:"FLOATING \u2013 POOL", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
-    {key:"Floating-Lounge", label:"FLOATING \u2013 LOUNGE", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
-    {key:"Floating-Dining", label:"FLOATING \u2013 DINING", group:"FLOATING RUNNER", swapGroup:"RUNNER", moveGroup:"SRC"},
-    {key:"Cashier-Main", label:"MAIN CASHIER", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
-    {key:"Cashier-Pool", label:"CASHIER \u2013 POOL", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
-    {key:"Cashier-Lounge", label:"CASHIER \u2013 LOUNGE", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
-    {key:"Cashier-Dining", label:"CASHIER \u2013 DINING", group:"CASHIER", swapGroup:"CASHIER", moveGroup:"CASHIER"},
-    {key:"Hostess-Desk", label:"HOSTESS DESK", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
-    {key:"Hostess-Pool", label:"HOSTESS \u2013 POOL", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
-    {key:"Hostess-Lounge", label:"HOSTESS \u2013 LOUNGE", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
-    {key:"Hostess-Dining", label:"HOSTESS \u2013 DINING", group:"HOSTESS", swapGroup:"HOSTESS", moveGroup:"HOSTESS"},
-    {key:"Checker-FoodPass", label:"FOOD PASS \u2013 CHECKER", group:"FOOD & BEVERAGE PASS", swapGroup:"CHECKER", moveGroup:"SRC"},
-    {key:"Runner-FoodPass", label:"FOOD PASS \u2013 RUNNER", group:"FOOD & BEVERAGE PASS", swapGroup:"RUNNER", moveGroup:"SRC"},
-    {key:"Checker-BeveragePass", label:"BEVERAGE PASS \u2013 CHECKER", group:"FOOD & BEVERAGE PASS", swapGroup:"CHECKER", moveGroup:"SRC"},
-    {key:"Runner-BeveragePass", label:"BEVERAGE PASS \u2013 RUNNER", group:"FOOD & BEVERAGE PASS", swapGroup:"RUNNER", moveGroup:"SRC"},
-  ];
 
   const assign = {};
   rows.forEach(r => assign[r.key] = {});
@@ -1560,10 +1619,22 @@ function doGenerate(){
     "consider moving their shift, or manually adding them to whichever section is thinnest that shift."
   );
 
+  // Hidden sections stay hidden only if genuinely empty today -- if someone's actually assigned
+  // there (e.g. a rare edge case), show it anyway so nobody silently disappears from the board.
+  const visibleRows = rows.filter(r=>{
+    if(!hiddenRowKeys.has(r.key)) return true;
+    const hasRealPeople = Object.values(assign[r.key] || {}).some(list => list.length > 0);
+    if(hasRealPeople){
+      unassignedWarnings.push("\u26a0 \"" + r.label + "\" is hidden from your Board Sections settings, but has real staff assigned today \u2014 showing it anyway.");
+      return true;
+    }
+    return false;
+  });
+
   recordWeeklyHistory(assign);
-  latestBreakData = computeBreaksAndManning(rows, assign);
+  latestBreakData = computeBreaksAndManning(visibleRows, assign);
   renderManningTable(latestBreakData);
-  renderBoard(rows, assign, shifts, notes, additionalNotes, starReasons, unassignedWarnings);
+  renderBoard(visibleRows, assign, shifts, notes, additionalNotes, starReasons, unassignedWarnings);
 }
 
 // ---------- Break scheduling + Manning Per Hour ----------
@@ -2225,6 +2296,7 @@ function exportDutiesToCSV(){
 
 loadDutyOverrides();
 loadWeeklyHistory();
+loadHiddenRows();
 
 function renderDuties(personNumbers, personInfo){
   const table = document.getElementById("dutiesTable");
