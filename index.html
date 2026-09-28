@@ -1117,6 +1117,7 @@ async function loadHiddenRows(){
     }
   }catch(e){ /* none hidden yet */ }
   buildSectionManagerUI();
+  if(typeof buildDutyMatrixEditor === "function") buildDutyMatrixEditor(); // in case this resolves after loadDutyOverrides already built it
 }
 
 function saveHiddenRows(){
@@ -1136,6 +1137,7 @@ function buildSectionManagerUI(){
     cb.addEventListener("change", ()=>{
       if(cb.checked) hiddenRowKeys.delete(r.key); else hiddenRowKeys.add(r.key);
       saveHiddenRows();
+      if(typeof buildDutyMatrixEditor === "function") buildDutyMatrixEditor();
     });
     label.appendChild(cb);
     label.appendChild(document.createTextNode(r.label));
@@ -2150,6 +2152,7 @@ function saveCustomDutyRows(){
 function dutyMatrixRows(){
   const out = [];
   DUTY_MATRIX_SPEC.forEach(spec=>{
+    if(spec.rowKeys.every(rk => hiddenRowKeys.has(rk))) return; // fully hidden section -- skip its duty row too
     spec.shifts.forEach(shift=>{
       out.push({label: spec.label, shift, rowKeys: spec.rowKeys, key: spec.label + " " + shift, custom:false});
     });
